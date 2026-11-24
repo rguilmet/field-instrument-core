@@ -1,0 +1,15 @@
+.secrets.local
+build/
+.pio/
+*.o
+*.a
+*.d
+*.bin
+*.elf
+*.map
+*.pyc
+__pycache__/
+.vscode/
+.DS_Store
+scratch/
+output/
