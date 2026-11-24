@@ -58,6 +58,7 @@ bool fic_lvgl_lock(int timeout_ms);
 void fic_lvgl_unlock(void);
 bool fic_lvgl_capture_framebuffer(uint8_t *dst_rgb565_be, size_t dst_bytes);
 void fic_lvgl_get_resolution(uint16_t *h_res_out, uint16_t *v_res_out);
+void fic_lvgl_set_io_expander(esp_io_expander_handle_t handle);
 esp_io_expander_handle_t fic_lvgl_get_io_expander(void);
 uint32_t fic_lvgl_get_last_user_activity_ms(void);
 void fic_lvgl_note_user_activity(void);

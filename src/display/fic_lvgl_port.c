@@ -279,6 +279,11 @@ void fic_lvgl_get_resolution(uint16_t *h_res_out, uint16_t *v_res_out)
     if (v_res_out) *v_res_out = s_disp_cfg.v_res;
 }
 
+void fic_lvgl_set_io_expander(esp_io_expander_handle_t handle)
+{
+    s_io_expander = handle;
+}
+
 esp_io_expander_handle_t fic_lvgl_get_io_expander(void)
 {
     return s_io_expander;

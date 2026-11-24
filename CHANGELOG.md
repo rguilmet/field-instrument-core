@@ -1,5 +1,10 @@
 # Changelog
 
+## [v1.0.1] - 2026-11-24
+### Fixed
+- `src/boards/waveshare_s3_35b.h`: Set `i2c0.speed_hz` to `400000U` matching Waveshare `01_factory` and added `EXIO2` (`TP_INT`) to `exio_input_mask`; fixed `exio_cam_pwdn_mask` to `(1UL << 0)` (`EXIO0`) so `EXIO7` (`PA_CTRL`) is not treated as camera power-down.
+- `src/display/fic_lvgl_port.{h,c}`: Added `fic_lvgl_set_io_expander()` so applications initializing TCA9554 prior to display setup (e.g. MicroSD `EXIO3` probing) can hand off their existing expander handle instead of attaching a second I2C device instance at `0x20`.
+
 ## [v1.0.0] - 2026-11-24
 ### Added
 - Completed **Phase 1.2C** (`Field_Instrument_Core v1.0.0` baseline):

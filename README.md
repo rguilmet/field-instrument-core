@@ -2,7 +2,7 @@
 
 Shared ESP32-S3 BSP, resilient dual-bus I2C recovery, display, audio, storage, web portal, sensor drivers, and 9-DOF AHRS math core for Waveshare ESP32-S3 field instruments.
 
-## Included Modules (v1.0.0)
+## Included Modules (v1.0.1)
 - `boards/`: Declarative board pin/bus descriptors (`FicBoardProfile_t`) with presets for Waveshare ESP32-S3-Touch-LCD-3.5B (`waveshare_s3_35b.h`) and Waveshare ESP32-S3-Touch-LCD-3.49 v3 (`waveshare_s3_349_v3.h`).
 - `bus/`: Parameterized ESP-IDF `i2c_master` BSP (`fic_i2c_bsp.h`) with FreeRTOS recursive locks, 18-clock open-drain GPIO bus clear, `0x61`/`0x71` sentinel detection, two-tier runtime bus recovery, and bus lifecycle hooks across `I2C_NUM_0` and `I2C_NUM_1`.
 - `io/`: `esp_io_expander` + `esp_io_expander_tca9554` wired to `fic_i2c_bsp` bus locks and reattach hooks.
