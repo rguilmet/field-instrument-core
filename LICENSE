@@ -23,6 +23,13 @@ SOFTWARE.
 ------------------------------------------------------------------------
 Third-Party Notices:
 - Files under src/io/ (esp_io_expander.h, esp_io_expander.c,
-  esp_io_expander_tca9554.h, esp_io_expander_tca9554.c) include upstream
-  Espressif Systems (Shanghai) CO LTD code licensed under the Apache
-  License, Version 2.0 (SPDX-License-Identifier: Apache-2.0).
+  esp_io_expander_tca9554.h, esp_io_expander_tca9554.c) and
+  src/display/fic_axs15231b.{h,c} include upstream Espressif Systems
+  (Shanghai) CO LTD code licensed under the Apache License, Version 2.0
+  (SPDX-License-Identifier: Apache-2.0).
+- Files under src/audio/esp_codec_dev/ include upstream Espressif
+  Systems esp_codec_dev code licensed under the Apache License, Version 2.0
+  (see src/audio/esp_codec_dev/LICENSE).
+- Files under src/audio/codec_board/ include upstream Espressif Systems
+  codec_board code licensed under the ESPRESSIF MIT License (see
+  src/audio/codec_board/LICENSE).

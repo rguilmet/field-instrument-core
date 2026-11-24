@@ -1,16 +1,35 @@
 /*
- * CoreSmoke_35B.ino - Standalone compile & hardware smoke test for Field_Instrument_Core v0.1.0
+ * CoreSmoke_35B.ino - Standalone compile & hardware smoke test for Field_Instrument_Core v0.2.0
  */
 
 #include <Arduino.h>
+#include <FFat.h>
 #include <Field_Instrument_Core.h>
 #include <boards/waveshare_s3_35b.h>
 #include <boards/waveshare_s3_349_v3.h>
 
-static FicBoardProfile_t      s_board;
-static esp_io_expander_handle_t s_exio = nullptr;
-static FicSen0696_t           s_sen0696;
-static Ahrs9DofState_t        s_ahrs;
+static FicBoardProfile_t s_board;
+static FicSen0696_t      s_sen0696;
+static Ahrs9DofState_t   s_ahrs;
+static lv_obj_t         *s_status_lbl = nullptr;
+
+static void smoke_create_ui(void)
+{
+    lv_obj_t *scr = lv_screen_active();
+    s_status_lbl = lv_label_create(scr);
+    lv_label_set_text(s_status_lbl, "Field_Instrument_Core Smoke");
+    lv_obj_center(s_status_lbl);
+}
+
+static bool save_smoke_screenshot(void)
+{
+    char path[96] = {0};
+    FicScreenshotCfg_t cfg = {};
+    cfg.primary_fs   = &FFat;
+    cfg.primary_name = "FFat";
+    cfg.dir_path     = "/screenshots";
+    return fic_screenshot_save_bmp(&cfg, path, sizeof(path));
+}
 
 void setup()
 {
@@ -21,8 +40,20 @@ void setup()
                   s_board.name, alt_board.name, FIC_CORE_VERSION_STR);
 
     (void)fic_i2c_init_from_board(&s_board);
-    if (fic_i2c0_bus != nullptr) {
-        (void)esp_io_expander_new_i2c_tca9554(fic_i2c0_bus, s_board.display.tca9554_addr, &s_exio);
+
+    FicLvglDisplayCfg_t disp_cfg = {};
+    fic_lvgl_cfg_from_board(&s_board, &disp_cfg);
+    disp_cfg.create_ui_cb = smoke_create_ui;
+    fic_lvgl_port_init(&disp_cfg);
+
+    FicAudioBeeperCfg_t audio_cfg = {};
+    fic_audio_beeper_default_cfg(&audio_cfg,
+                                 "S3_LCD_3_5B",
+                                 fic_lvgl_get_io_expander(),
+                                 (1UL << 7));
+    if (fic_audio_beeper_init(&audio_cfg)) {
+        (void)fic_audio_beeper_start_task();
+        fic_audio_beeper_play(1500U, 40U);
     }
 
     fic_axp2101_init();
@@ -56,6 +87,10 @@ void setup()
 
 void loop()
 {
+    if (Serial.available() > 0 && Serial.read() == 's') {
+        (void)save_smoke_screenshot();
+    }
+
     FicQmi8658Data_t imu = {};
     fic_qmi8658_read_tilt(&imu);
 

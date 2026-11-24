@@ -107,23 +107,28 @@ uint8_t fic_i2c_write_buff(i2c_master_dev_handle_t dev_handle, int reg, uint8_t 
     return fic_i2c_write_buff_port(0U, dev_handle, reg, buf, len);
 }
 
-uint8_t fic_i2c_write_read_dev(i2c_master_dev_handle_t dev_handle, uint8_t *writeBuf, uint8_t writeLen, uint8_t *readBuf, uint8_t readLen)
+uint8_t fic_i2c_write_read_dev_port(uint8_t port, i2c_master_dev_handle_t dev_handle, uint8_t *writeBuf, uint8_t writeLen, uint8_t *readBuf, uint8_t readLen)
 {
-    if (!fic_i2c_lock_port(0U, 200)) {
+    if (port > 1U || !fic_i2c_lock_port(port, 200)) {
         return 1;
     }
     if (dev_handle == NULL) {
-        fic_i2c_unlock_port(0U);
+        fic_i2c_unlock_port(port);
         return 1;
     }
     esp_err_t ret = i2c_master_transmit_receive(dev_handle, writeBuf, writeLen, readBuf, readLen, g_fic_i2c_timeout_ticks);
     if (ret == ESP_OK) {
-        g_fic_i2c_ports[0].consec_timeouts = 0;
+        g_fic_i2c_ports[port].consec_timeouts = 0;
     } else {
-        fic_i2c_recover_port_locked(0U, "WriteRead", dev_handle, -1, ret);
+        fic_i2c_recover_port_locked(port, "WriteRead", dev_handle, -1, ret);
     }
-    fic_i2c_unlock_port(0U);
+    fic_i2c_unlock_port(port);
     return (ret == ESP_OK) ? 0 : 1;
+}
+
+uint8_t fic_i2c_write_read_dev(i2c_master_dev_handle_t dev_handle, uint8_t *writeBuf, uint8_t writeLen, uint8_t *readBuf, uint8_t readLen)
+{
+    return fic_i2c_write_read_dev_port(0U, dev_handle, writeBuf, writeLen, readBuf, readLen);
 }
 
 uint8_t fic_i2c_read_buff(i2c_master_dev_handle_t dev_handle, int reg, uint8_t *buf, uint8_t len)
