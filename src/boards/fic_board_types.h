@@ -39,6 +39,7 @@ typedef struct {
     uint32_t speed_hz;
     uint32_t scl_wait_us;
     bool     enable_internal_pullup;
+    uint8_t  addr_touch;
 } FicI2cAuxCfg_t;
 
 /**
@@ -64,6 +65,11 @@ typedef struct {
     uint32_t exio_lcd_rst_mask;
     uint32_t exio_cam_pwdn_mask;
     uint32_t exio_bl_en_mask;
+    uint32_t exio_sys_en_mask;
+    uint16_t lcd_rst_low_ms;
+    bool     touch_swap_xy;
+    bool     touch_invert_y;
+    bool     touch_ignore_event_flag;
 } FicBoardDisplayDesc_t;
 
 /**

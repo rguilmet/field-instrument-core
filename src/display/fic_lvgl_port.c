@@ -43,31 +43,42 @@ void fic_lvgl_cfg_from_board(const FicBoardProfile_t *board, FicLvglDisplayCfg_t
         return;
     }
     memset(out, 0, sizeof(*out));
-    out->h_res              = board->display.h_res;
-    out->v_res              = board->display.v_res;
-    out->dma_buf_bytes      = (size_t)board->display.h_res * 24U * 2U;
-    out->spiram_buf_bytes   = (size_t)board->display.h_res * (size_t)board->display.v_res * 2U;
-    out->spi_host           = board->display.spi_host;
-    out->pin_cs             = board->display.pin_cs;
-    out->pin_pclk           = board->display.pin_pclk;
-    out->pin_data0          = board->display.pin_data0;
-    out->pin_data1          = board->display.pin_data1;
-    out->pin_data2          = board->display.pin_data2;
-    out->pin_data3          = board->display.pin_data3;
-    out->pin_bk_light       = board->display.pin_bk_light;
-    out->pclk_hz            = board->display.pclk_hz ? board->display.pclk_hz : 40000000U;
-    out->tca9554_addr       = board->display.tca9554_addr;
-    out->exio_input_mask    = board->display.exio_input_mask;
-    out->exio_output_mask   = board->display.exio_output_mask;
-    out->exio_lcd_rst_mask  = board->display.exio_lcd_rst_mask;
-    out->exio_cam_pwdn_mask = board->display.exio_cam_pwdn_mask;
-    out->exio_bl_en_mask    = board->display.exio_bl_en_mask;
-    out->touch_i2c_port     = (board->i2c0.addr_touch != 0U) ? 0U : 1U;
-    out->tick_period_ms     = 5U;
-    out->task_max_delay_ms  = 20U;
-    out->task_min_delay_ms  = 5U;
-    out->task_stack_size    = 10U * 1024U;
-    out->task_priority      = 3U;
+    out->h_res                   = board->display.h_res;
+    out->v_res                   = board->display.v_res;
+    uint16_t dma_rows            = 24U;
+    if (board->display.v_res > 0U) {
+        while (dma_rows > 1U && (board->display.v_res % dma_rows) != 0U) {
+            dma_rows--;
+        }
+    }
+    out->dma_buf_bytes           = (size_t)board->display.h_res * (size_t)dma_rows * 2U;
+    out->spiram_buf_bytes        = (size_t)board->display.h_res * (size_t)board->display.v_res * 2U;
+    out->spi_host                = board->display.spi_host;
+    out->pin_cs                  = board->display.pin_cs;
+    out->pin_pclk                = board->display.pin_pclk;
+    out->pin_data0               = board->display.pin_data0;
+    out->pin_data1               = board->display.pin_data1;
+    out->pin_data2               = board->display.pin_data2;
+    out->pin_data3               = board->display.pin_data3;
+    out->pin_bk_light            = board->display.pin_bk_light;
+    out->pclk_hz                 = board->display.pclk_hz ? board->display.pclk_hz : 40000000U;
+    out->tca9554_addr            = board->display.tca9554_addr;
+    out->exio_input_mask         = board->display.exio_input_mask;
+    out->exio_output_mask        = board->display.exio_output_mask;
+    out->exio_lcd_rst_mask       = board->display.exio_lcd_rst_mask;
+    out->exio_cam_pwdn_mask      = board->display.exio_cam_pwdn_mask;
+    out->exio_bl_en_mask         = board->display.exio_bl_en_mask;
+    out->exio_sys_en_mask        = board->display.exio_sys_en_mask;
+    out->lcd_rst_low_ms          = board->display.lcd_rst_low_ms ? board->display.lcd_rst_low_ms : 150U;
+    out->touch_swap_xy           = board->display.touch_swap_xy;
+    out->touch_invert_y          = board->display.touch_invert_y;
+    out->touch_ignore_event_flag = board->display.touch_ignore_event_flag;
+    out->touch_i2c_port          = (board->i2c0.addr_touch != 0U) ? 0U : 1U;
+    out->tick_period_ms          = 5U;
+    out->task_max_delay_ms       = 20U;
+    out->task_min_delay_ms       = 5U;
+    out->task_stack_size         = 10U * 1024U;
+    out->task_priority           = 3U;
 }
 
 static bool fic_notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t panel_io,
@@ -158,7 +169,7 @@ static void TouchInputReadCallback(lv_indev_t *indev, lv_indev_data_t *indevData
     static uint32_t backoff_until_ms = 0;
 
     i2c_master_dev_handle_t touch_dev = s_disp_cfg.touch_dev_handle;
-    if (touch_dev == NULL && s_disp_cfg.touch_i2c_port == 0U) {
+    if (touch_dev == NULL) {
         touch_dev = fic_touch_dev;
     }
     if (touch_dev == NULL) {
@@ -188,9 +199,24 @@ static void TouchInputReadCallback(lv_indev_t *indev, lv_indev_data_t *indevData
         // Reject corrupt 0x61 / 0x71 repeated-sentinel I2C glitches in addition to 0xFF invalid frames
         corrupt_sentinel = fic_i2c_has_sentinel_run(buff, 6U, 2U);
         uint8_t event_flag = (buff[2] >> 6) & 0x03;
-        if (!corrupt_sentinel && buff[0] != 0xFF && buff[1] >= 1 && buff[1] <= 2 && event_flag != 0x01) {
-            uint16_t pointX = (((uint16_t)buff[2] & 0x0F) << 8) | (uint16_t)buff[3];
-            uint16_t pointY = (((uint16_t)buff[4] & 0x0F) << 8) | (uint16_t)buff[5];
+        uint8_t max_pts = s_disp_cfg.touch_ignore_event_flag ? 4U : 2U;
+        bool event_ok = s_disp_cfg.touch_ignore_event_flag || (event_flag != 0x01U);
+        if (!corrupt_sentinel && buff[0] != 0xFF && buff[1] >= 1 && buff[1] <= max_pts && event_ok) {
+            uint16_t raw_x = (((uint16_t)buff[2] & 0x0F) << 8) | (uint16_t)buff[3];
+            uint16_t raw_y = (((uint16_t)buff[4] & 0x0F) << 8) | (uint16_t)buff[5];
+            uint16_t pointX;
+            uint16_t pointY;
+            if (s_disp_cfg.touch_swap_xy) {
+                if (raw_x > s_disp_cfg.v_res) raw_x = s_disp_cfg.v_res;
+                if (raw_y > s_disp_cfg.h_res) raw_y = s_disp_cfg.h_res;
+                pointX = raw_y;
+                pointY = s_disp_cfg.touch_invert_y ? (uint16_t)(s_disp_cfg.v_res - raw_x) : raw_x;
+            } else {
+                pointX = raw_x;
+                pointY = s_disp_cfg.touch_invert_y
+                             ? (raw_y > s_disp_cfg.v_res ? 0U : (uint16_t)(s_disp_cfg.v_res - raw_y))
+                             : raw_y;
+            }
             if (pointX >= s_disp_cfg.h_res) pointX = s_disp_cfg.h_res - 1U;
             if (pointY >= s_disp_cfg.v_res) pointY = s_disp_cfg.v_res - 1U;
             last_x = (int16_t)pointX;
@@ -335,6 +361,9 @@ static void fic_lcd_exio_init(void)
     // Leave EXIO3 (SD_CS / DAT3) untouched here so SD_MMC / SPI setup remains undisturbed
     esp_io_expander_set_dir(s_io_expander, s_disp_cfg.exio_input_mask, IO_EXPANDER_INPUT);
     esp_io_expander_set_dir(s_io_expander, s_disp_cfg.exio_output_mask, IO_EXPANDER_OUTPUT);
+    if (s_disp_cfg.exio_sys_en_mask != 0) {
+        esp_io_expander_set_level(s_io_expander, s_disp_cfg.exio_sys_en_mask, 1);
+    }
     if (s_disp_cfg.exio_cam_pwdn_mask != 0) {
         esp_io_expander_set_level(s_io_expander, s_disp_cfg.exio_cam_pwdn_mask, 1);
     }
@@ -342,7 +371,7 @@ static void fic_lcd_exio_init(void)
         esp_io_expander_set_level(s_io_expander, s_disp_cfg.exio_lcd_rst_mask, 1);
     }
     if (s_disp_cfg.exio_bl_en_mask != 0) {
-        esp_io_expander_set_level(s_io_expander, s_disp_cfg.exio_bl_en_mask, 1);
+        esp_io_expander_set_level(s_io_expander, s_disp_cfg.exio_bl_en_mask, 0);
     }
 }
 
@@ -351,10 +380,11 @@ static void fic_lcd_reset(void)
     if (s_io_expander == NULL || s_disp_cfg.exio_lcd_rst_mask == 0) {
         return;
     }
+    uint16_t low_ms = s_disp_cfg.lcd_rst_low_ms ? s_disp_cfg.lcd_rst_low_ms : 150U;
     esp_io_expander_set_level(s_io_expander, s_disp_cfg.exio_lcd_rst_mask, 1);
     vTaskDelay(pdMS_TO_TICKS(30));
     esp_io_expander_set_level(s_io_expander, s_disp_cfg.exio_lcd_rst_mask, 0);
-    vTaskDelay(pdMS_TO_TICKS(150));
+    vTaskDelay(pdMS_TO_TICKS(low_ms));
     esp_io_expander_set_level(s_io_expander, s_disp_cfg.exio_lcd_rst_mask, 1);
     vTaskDelay(pdMS_TO_TICKS(30));
 }
@@ -428,6 +458,9 @@ void fic_lvgl_port_init(const FicLvglDisplayCfg_t *cfg)
 
     fic_lcd_reset();
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel));
+    if (s_io_expander != NULL && s_disp_cfg.exio_bl_en_mask != 0) {
+        esp_io_expander_set_level(s_io_expander, s_disp_cfg.exio_bl_en_mask, 1);
+    }
     if (s_disp_cfg.init_backlight_cb != NULL) {
         s_disp_cfg.init_backlight_cb();
     }

@@ -665,7 +665,10 @@ void fic_i2c_reinit_bus(void)
 
     if (fic_rtc_dev)      { i2c_master_bus_rm_device(fic_rtc_dev);      fic_rtc_dev = NULL; }
     if (fic_imu_dev)      { i2c_master_bus_rm_device(fic_imu_dev);      fic_imu_dev = NULL; }
-    if (fic_touch_dev)    { i2c_master_bus_rm_device(fic_touch_dev);    fic_touch_dev = NULL; }
+    if (fic_touch_dev && g_fic_i2c0_cfg.addr_touch != 0U) {
+        i2c_master_bus_rm_device(fic_touch_dev);
+        fic_touch_dev = NULL;
+    }
     if (fic_pmic_dev)     { i2c_master_bus_rm_device(fic_pmic_dev);     fic_pmic_dev = NULL; }
     if (fic_mag_dev)      { i2c_master_bus_rm_device(fic_mag_dev);      fic_mag_dev = NULL; }
     if (fic_beam_imu_dev && g_fic_beam_imu_bus == 0U) {

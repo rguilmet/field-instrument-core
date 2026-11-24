@@ -67,6 +67,20 @@ bool fic_i2c1_bringup_locked(const FicI2cAuxCfg_t *cfg)
     }
     i2c_master_bus_reset(fic_i2c1_bus);
     vTaskDelay(pdMS_TO_TICKS(10));
+    if (cfg->addr_touch != 0U && fic_touch_dev == NULL) {
+        i2c_device_config_t touch_cfg = {
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .device_address  = cfg->addr_touch,
+            .scl_speed_hz    = cfg->speed_hz ? cfg->speed_hz : 200000U,
+            .scl_wait_us     = cfg->scl_wait_us ? cfg->scl_wait_us : 20000U,
+        };
+        esp_err_t touch_err = i2c_master_bus_add_device(fic_i2c1_bus, &touch_cfg, &fic_touch_dev);
+        if (touch_err != ESP_OK) {
+            fic_touch_dev = NULL;
+            fic_i2c_internal_log("[I2C1 WARN] add touch 0x%02X failed err=0x%X\n",
+                                 cfg->addr_touch, (unsigned int)touch_err);
+        }
+    }
     return true;
 }
 
@@ -113,6 +127,10 @@ void fic_i2c_reinit_bus1(void)
     }
     fic_i2c_invoke_hooks_port(1U, false);
 
+    if (fic_touch_dev != NULL && g_fic_i2c1_cfg.addr_touch != 0U) {
+        i2c_master_bus_rm_device(fic_touch_dev);
+        fic_touch_dev = NULL;
+    }
     if (fic_beam_imu_dev != NULL && g_fic_beam_imu_bus == 1U) {
         i2c_master_bus_rm_device(fic_beam_imu_dev);
         fic_beam_imu_dev = NULL;

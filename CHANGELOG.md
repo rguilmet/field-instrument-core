@@ -1,5 +1,17 @@
 # Changelog
 
+## [v1.1.0] - 2026-11-24
+### Added
+- `src/boards/fic_board_types.h` & `src/boards/waveshare_s3_349_v3.h`: Added I2C1 `addr_touch`, `exio_sys_en_mask`, `lcd_rst_low_ms`, `touch_swap_xy`, `touch_invert_y`, and `touch_ignore_event_flag` board descriptors for full Waveshare ESP32-S3-Touch-LCD-3.49 v3 support (`200 kHz` I2C0/I2C1, `EXIO6` battery latch, `250 ms` LCD reset, swapped/Y-inverted `172x640` touch).
+- `src/bus/fic_i2c_bus1.c`: Attach and reattach `fic_touch_dev` automatically when `cfg->addr_touch != 0`.
+
+### Fixed
+- `src/bus/fic_i2c_bsp.c`: Guarded `fic_touch_dev` removal in `fic_i2c_reinit_bus()` on `g_fic_i2c0_cfg.addr_touch != 0` so I2C0 recovery never detaches an I2C1-hosted touch controller.
+- `src/display/fic_lvgl_port.{h,c}`:
+  - Computed `dma_buf_bytes` rows in `fic_lvgl_cfg_from_board()` as the largest divisor of `v_res` `<= 24` (`20` rows for `640`, `24` rows for `480`) so flush strips cover `100%` of the panel height.
+  - Sequenced `exio_sys_en_mask` HIGH immediately and kept `exio_bl_en_mask` LOW during LCD reset/init until `esp_lcd_panel_init()` finishes.
+  - Added `fic_touch_dev` fallback across both I2C ports and board-driven X/Y swap, Y-invert, and event-flag relaxation in `TouchInputReadCallback()`.
+
 ## [v1.0.1] - 2026-11-24
 ### Fixed
 - `src/boards/waveshare_s3_35b.h`: Set `i2c0.speed_hz` to `400000U` matching Waveshare `01_factory` and added `EXIO2` (`TP_INT`) to `exio_input_mask`; fixed `exio_cam_pwdn_mask` to `(1UL << 0)` (`EXIO0`) so `EXIO7` (`PA_CTRL`) is not treated as camera power-down.

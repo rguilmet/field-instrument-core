@@ -37,6 +37,11 @@ typedef struct {
     uint32_t                        exio_lcd_rst_mask;
     uint32_t                        exio_cam_pwdn_mask;
     uint32_t                        exio_bl_en_mask;
+    uint32_t                        exio_sys_en_mask;
+    uint16_t                        lcd_rst_low_ms;
+    bool                            touch_swap_xy;
+    bool                            touch_invert_y;
+    bool                            touch_ignore_event_flag;
     uint8_t                         touch_i2c_port;
     i2c_master_dev_handle_t         touch_dev_handle;
     const axs15231b_lcd_init_cmd_t *init_cmds;
