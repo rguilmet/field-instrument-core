@@ -1,5 +1,12 @@
 # Changelog
 
+## [v1.1.1] - 2026-11-24
+### Added
+- `src/boards/fic_board_types.h` & `README.md`: Exported canonical dual-core FreeRTOS task constants (`FIC_CORE_ACQ = 0`, `FIC_CORE_UI = 1`, `FIC_PRIO_AUDIO = 4`, `FIC_PRIO_LVGL = 3`, `FIC_PRIO_UI_FEED = 2`, `FIC_PRIO_BACKGROUND = 1`) and documented the shared memory/RTOS contract across instruments.
+
+### Changed
+- `src/display/fic_lvgl_port.c`: Updated `fic_lvgl_cfg_from_board()` to pick the largest divisor `dma_rows <= 64` of `v_res` keeping `h_res * dma_rows * 2 <= 16384 B` (`24` rows / `20` strips on `320x480`, `40` rows / `16` strips on `172x640`), reducing QSPI flush overhead on narrow panels while keeping internal DMA usage `<= 16 KB`; anchored `fic_lvgl_port_task` to `FIC_PRIO_LVGL` (`3`) on `FIC_CORE_UI` (`1`).
+
 ## [v1.1.0] - 2026-11-24
 ### Added
 - `src/boards/fic_board_types.h` & `src/boards/waveshare_s3_349_v3.h`: Added I2C1 `addr_touch`, `exio_sys_en_mask`, `lcd_rst_low_ms`, `touch_swap_xy`, `touch_invert_y`, and `touch_ignore_event_flag` board descriptors for full Waveshare ESP32-S3-Touch-LCD-3.49 v3 support (`200 kHz` I2C0/I2C1, `EXIO6` battery latch, `250 ms` LCD reset, swapped/Y-inverted `172x640` touch).

@@ -9,6 +9,19 @@ extern "C" {
 #endif
 
 /**
+ * @brief Canonical FreeRTOS dual-core & priority architecture shared across instruments.
+ *        Core 0 handles wireless/network & high-rate sensor acquisition.
+ *        Core 1 isolates real-time I2S audio (Prio 4) above LVGL (Prio 3),
+ *        UI feed / power tasks (Prio 2), and background Flash/SD I/O (Prio 1).
+ */
+#define FIC_CORE_ACQ        0
+#define FIC_CORE_UI         1
+#define FIC_PRIO_AUDIO      4U
+#define FIC_PRIO_LVGL       3U
+#define FIC_PRIO_UI_FEED    2U
+#define FIC_PRIO_BACKGROUND 1U
+
+/**
  * @brief Shared printf-compatible log callback injected by consumer firmware.
  */
 typedef int (*fic_log_cb_t)(const char *fmt, ...);

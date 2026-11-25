@@ -2,7 +2,7 @@
 
 Shared ESP32-S3 BSP, resilient dual-bus I2C recovery, display, audio, storage, web portal, sensor drivers, and 9-DOF AHRS math core for Waveshare ESP32-S3 field instruments.
 
-## Included Modules (v1.1.0)
+## Included Modules (v1.1.1)
 - `boards/`: Declarative board pin/bus descriptors (`FicBoardProfile_t`) with presets for Waveshare ESP32-S3-Touch-LCD-3.5B (`waveshare_s3_35b.h`) and Waveshare ESP32-S3-Touch-LCD-3.49 v3 (`waveshare_s3_349_v3.h`).
 - `bus/`: Parameterized ESP-IDF `i2c_master` BSP (`fic_i2c_bsp.h`) with FreeRTOS recursive locks, 18-clock open-drain GPIO bus clear, `0x61`/`0x71` sentinel detection, two-tier runtime bus recovery, and bus lifecycle hooks across `I2C_NUM_0` and `I2C_NUM_1`.
 - `io/`: `esp_io_expander` + `esp_io_expander_tca9554` wired to `fic_i2c_bsp` bus locks and reattach hooks.
@@ -25,6 +25,12 @@ Shared ESP32-S3 BSP, resilient dual-bus I2C recovery, display, audio, storage, w
 - `fusion/`: `fic_ahrs_9dof.h` (instance-safe 9-DOF Madgwick filter, 8 right-handed orientation permutations, stationary gyro FOC, gated gravity fusion).
 - `sensors/`: `fic_qmi8658.h`, `fic_sen0696.h`, `fic_mmc5983ma.h`.
 - `rtc/` & `power/`: `fic_pcf85063.h`, `fic_axp2101.h`.
+
+## Standard FreeRTOS & Memory Contract
+All consumer instruments built on `Field_Instrument_Core` share a single ESP32-S3 dual-core and memory architecture (`fic_board_types.h`):
+- **Core `0` (`FIC_CORE_ACQ`):** Wireless/TCP-IP stacks and real-time sensor/radio acquisition (`FIC_PRIO_UI_FEED = 2`).
+- **Core `1` (`FIC_CORE_UI`):** Real-time I2S audio synthesis (`FIC_PRIO_AUDIO = 4`) above `LVGL` rendering (`FIC_PRIO_LVGL = 3`), UI state/power tasks (`FIC_PRIO_UI_FEED = 2`), and background `loop()` Flash/SD writes, debounced settings saves, and HTTP polling (`FIC_PRIO_BACKGROUND = 1`).
+- **Heap & Flash Discipline:** Bulk LVGL UI trees route allocations `>= 64 B` to Octal PSRAM (`heap_caps_malloc_extmem_enable`), keeping `>= 150 KB` internal `DRAM0` free for Wi-Fi/BLE/DMA (`<= 25%` static `.bss`); Flash/SD settings writes must never run inside LVGL or UI tasks.
 
 ## Verification & Extras
 - `extras/unit_tests/`: Host C++17 unit tests & ESP32-S3 syntax gate (`python extras/unit_tests/run_tests.py`).

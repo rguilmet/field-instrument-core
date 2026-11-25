@@ -45,7 +45,10 @@ void fic_lvgl_cfg_from_board(const FicBoardProfile_t *board, FicLvglDisplayCfg_t
     memset(out, 0, sizeof(*out));
     out->h_res                   = board->display.h_res;
     out->v_res                   = board->display.v_res;
-    uint16_t dma_rows            = 24U;
+    uint16_t max_rows            = (board->display.h_res > 0U) ? (uint16_t)(16384U / ((size_t)board->display.h_res * 2U)) : 24U;
+    if (max_rows > 64U) max_rows = 64U;
+    if (max_rows < 1U)  max_rows = 1U;
+    uint16_t dma_rows            = max_rows;
     if (board->display.v_res > 0U) {
         while (dma_rows > 1U && (board->display.v_res % dma_rows) != 0U) {
             dma_rows--;
@@ -78,7 +81,7 @@ void fic_lvgl_cfg_from_board(const FicBoardProfile_t *board, FicLvglDisplayCfg_t
     out->task_max_delay_ms       = 20U;
     out->task_min_delay_ms       = 5U;
     out->task_stack_size         = 10U * 1024U;
-    out->task_priority           = 3U;
+    out->task_priority           = FIC_PRIO_LVGL;
 }
 
 static bool fic_notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t panel_io,
@@ -505,5 +508,5 @@ void fic_lvgl_port_init(const FicLvglDisplayCfg_t *cfg)
         fic_lvgl_unlock();
     }
 
-    xTaskCreatePinnedToCore(fic_lvgl_port_task, "LVGL", s_disp_cfg.task_stack_size, NULL, s_disp_cfg.task_priority, NULL, 1);
+    xTaskCreatePinnedToCore(fic_lvgl_port_task, "LVGL", s_disp_cfg.task_stack_size, NULL, s_disp_cfg.task_priority, NULL, FIC_CORE_UI);
 }
