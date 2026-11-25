@@ -1,10 +1,11 @@
 /*
- * CoreSmoke_35B.ino - Standalone compile & hardware smoke test for Field_Instrument_Core v1.0.0
+ * CoreSmoke_35B.ino - Standalone compile & hardware smoke test for Field_Instrument_Core v1.2.0
  */
 
 #include <Arduino.h>
 #include <FFat.h>
 #include <Field_Instrument_Core.h>
+#include <ble/fic_ble_enable.h>
 #include <boards/waveshare_s3_35b.h>
 #include <boards/waveshare_s3_349_v3.h>
 
@@ -45,6 +46,19 @@ static bool exercise_atomic_json(void)
     }
     JsonDocument loaded;
     return fic_json_load_with_recovery(FFat, "/smoke.json", "/smoke.json.bak", "/smoke.json.tmp", loaded, fic_core_log_printf);
+}
+
+static void smoke_ble_snapshot(JsonObject settings_out, JsonObject runtime_out, const char *section)
+{
+    (void)section;
+    settings_out["demo_hz"] = 5;
+    runtime_out["heap_kb"]  = (uint32_t)(ESP.getFreeHeap() / 1024U);
+}
+
+static void smoke_ble_stream_rx(const uint8_t *data, size_t len)
+{
+    (void)data;
+    fic_core_log_printf("[BLE SMOKE] STREAM_RX %u B\n", (unsigned)len);
 }
 
 void setup()
@@ -129,6 +143,22 @@ void setup()
     web_cfg.log_cb            = fic_core_log_printf;
     fic_web_portal_configure(&web_cfg);
 
+    FicBleCompanionCfg_t ble_cfg = {};
+    ble_cfg.device_type        = "core_smoke";
+    ble_cfg.device_name        = "FIC-Smoke";
+    ble_cfg.fw_version         = FIC_CORE_VERSION_STR;
+    ble_cfg.board_name         = "waveshare_s3_35b";
+    ble_cfg.schema_ver         = 1U;
+    ble_cfg.telem_hz_default   = 5U;
+    ble_cfg.enable_stream_rx   = true;
+    ble_cfg.ctrl_rx_ring_bytes = 4096U;
+    ble_cfg.fallback_fs        = &FFat;
+    ble_cfg.fs_mux             = s_fs_mux;
+    ble_cfg.snapshot_cb        = smoke_ble_snapshot;
+    ble_cfg.stream_rx_cb       = smoke_ble_stream_rx;
+    ble_cfg.log_cb             = fic_core_log_printf;
+    fic_ble_companion_configure(&ble_cfg);
+
     Ahrs9DofConfig_t ahrs_cfg = {};
     ahrs_9dof_default_config(&ahrs_cfg, AHRS_ORIENT_DOWN_0);
     ahrs_9dof_init(&s_ahrs, &ahrs_cfg);
@@ -151,6 +181,10 @@ void loop()
             fic_web_portal_start();
         } else if (ch == 'q') {
             fic_web_portal_stop();
+        } else if (ch == 'b') {
+            (void)fic_ble_companion_start();
+        } else if (ch == 'x') {
+            fic_ble_companion_stop();
         }
     }
 
@@ -168,6 +202,7 @@ void loop()
     fic_ring_logger_feed(&s_ring_log, reinterpret_cast<const uint8_t *>("tick\n"), 5U);
     fic_ring_logger_flush(&s_ring_log);
     fic_core_log_flush();
+    fic_ble_companion_loop();
     fic_web_portal_handle();
     delay(50);
 }

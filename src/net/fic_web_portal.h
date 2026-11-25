@@ -48,6 +48,14 @@ void fic_web_portal_configure(const FicWebPortalCfg_t *cfg);
 extern "C" {
 #endif
 
+typedef bool (*fic_web_ble_is_active_cb_t)(void);
+typedef void (*fic_web_ble_suspend_cb_t)(void);
+typedef void (*fic_web_ble_resume_cb_t)(void);
+
+void fic_web_portal_register_ble_hooks(fic_web_ble_is_active_cb_t is_active_cb,
+                                       fic_web_ble_suspend_cb_t suspend_cb,
+                                       fic_web_ble_resume_cb_t resume_cb);
+
 void fic_web_portal_start(void);
 void fic_web_portal_stop(void);
 void fic_web_portal_handle(void);

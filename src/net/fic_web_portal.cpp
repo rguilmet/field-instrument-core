@@ -17,8 +17,14 @@ static volatile bool     s_wifi_active           = false;
 static volatile bool     s_wifi_starting         = false;
 static volatile bool     s_wifi_abort_requested  = false;
 static volatile bool     s_wifi_stop_pending     = false;
+static volatile bool     s_ble_resume_after_wifi = false;
+static volatile bool     s_ble_resume_pending    = false;
 static char              s_wifi_ip[32]           = {0};
 static WebServer        *s_server                = nullptr;
+
+static fic_web_ble_is_active_cb_t s_ble_is_active_cb = nullptr;
+static fic_web_ble_suspend_cb_t   s_ble_suspend_cb   = nullptr;
+static fic_web_ble_resume_cb_t    s_ble_resume_cb    = nullptr;
 
 static void web_log(const char *fmt, ...)
 {
@@ -222,6 +228,15 @@ static void setup_web_routes(void)
     }, handleUpload);
 }
 
+extern "C" void fic_web_portal_register_ble_hooks(fic_web_ble_is_active_cb_t is_active_cb,
+                                               fic_web_ble_suspend_cb_t suspend_cb,
+                                               fic_web_ble_resume_cb_t resume_cb)
+{
+    s_ble_is_active_cb = is_active_cb;
+    s_ble_suspend_cb   = suspend_cb;
+    s_ble_resume_cb    = resume_cb;
+}
+
 extern "C" void fic_web_portal_configure(const FicWebPortalCfg_t *cfg)
 {
     if (cfg != nullptr) {
@@ -272,6 +287,27 @@ extern "C" void fic_web_portal_start(void)
             s_wifi_starting = false;
             notify_status("Wi-Fi Off");
             web_log("[WIFI] Connection cancelled before init.\n");
+            vTaskDelete(NULL);
+            return;
+        }
+
+        // Core-enforced BLE <-> Wi-Fi mutual exclusion: tear down NimBLE cleanly to reclaim DRAM0.
+        if (s_ble_is_active_cb != nullptr && s_ble_is_active_cb() && s_ble_suspend_cb != nullptr) {
+            s_ble_resume_after_wifi = true;
+            notify_status("Stopping BLE...");
+            web_log("[WIFI] Suspending active BLE companion before Wi-Fi init...\n");
+            s_ble_suspend_cb();
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+
+        if (s_wifi_abort_requested) {
+            s_wifi_starting = false;
+            if (s_ble_resume_after_wifi) {
+                s_ble_resume_after_wifi = false;
+                s_ble_resume_pending    = true;
+            }
+            notify_status("Wi-Fi Off");
+            web_log("[WIFI] Connection cancelled after BLE suspend.\n");
             vTaskDelete(NULL);
             return;
         }
@@ -378,6 +414,10 @@ extern "C" void fic_web_portal_start(void)
             s_wifi_active   = false;
             s_wifi_starting = false;
             s_wifi_ip[0]    = '\0';
+            if (s_ble_resume_after_wifi) {
+                s_ble_resume_after_wifi = false;
+                s_ble_resume_pending    = true;
+            }
             notify_status("Wi-Fi Off");
             web_log("[WIFI] Connection cancelled by user.\n");
             vTaskDelete(NULL);
@@ -443,6 +483,10 @@ extern "C" void fic_web_portal_start(void)
                 s_wifi_active   = false;
                 s_wifi_starting = false;
                 s_wifi_ip[0]    = '\0';
+                if (s_ble_resume_after_wifi) {
+                    s_ble_resume_after_wifi = false;
+                    s_ble_resume_pending    = true;
+                }
                 notify_status("Wi-Fi Off");
                 web_log("[WIFI] SoftAP startup cancelled by user.\n");
                 vTaskDelete(NULL);
@@ -502,7 +546,18 @@ extern "C" void fic_web_portal_handle(void)
         s_wifi_ip[0]  = '\0';
         notify_status("Wi-Fi Off");
         web_log("[WIFI] Web Portal Stopped.\n");
+        if (s_ble_resume_after_wifi) {
+            s_ble_resume_after_wifi = false;
+            s_ble_resume_pending    = true;
+        }
         return;
+    }
+    if (s_ble_resume_pending && !s_wifi_active && !s_wifi_starting && !s_wifi_stop_pending) {
+        s_ble_resume_pending = false;
+        if (s_ble_resume_cb != nullptr) {
+            web_log("[WIFI] Restoring BLE companion after Wi-Fi stop...\n");
+            s_ble_resume_cb();
+        }
     }
     if (s_wifi_active && s_server) {
         s_server->handleClient();

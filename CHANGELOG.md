@@ -1,5 +1,16 @@
 # Changelog
 
+## [v1.2.0] - 2026-11-25
+### Added
+- **Generic FICP (`v1.0.0`) BLE 5.0 Companion Engine (`src/ble/`):**
+  - `src/ble/fic_ble_protocol.{h,cpp}`: Hardware-agnostic `0xAA 0x55` frame encoder/parser, `CRC-16/CCITT-FALSE`, streaming `CRC-32`, monotonic `state_rev` & `ControlMode` (`standalone` / `companion_mirror` / `slave_dimmed`) session engine with `5 s` heartbeat watchdog (`3..15 s` bounds), and civil UTC calendar converter.
+  - `src/ble/fic_ble_enable.h`: Opt-in BLE controller memory retention header (`<esp32-hal-alloc-ble-mem.h>`) so non-BLE sketches retain full internal `DRAM0` (~36 KB freed).
+  - `src/ble/fic_ble_companion.{h,cpp}`, `src/ble/fic_ble_dispatch.cpp`, `src/ble/fic_ble_files.cpp`: Direct ESP-IDF NimBLE C GATT server exposing FIC Primary Service `5f494350-0001-4b10-a8e1-464943500001` (`CTRL_RX`/`CTRL_TX` + optional `STREAM_RX`/`STREAM_TX`, `MTU 517`), Octal PSRAM ring/staging buffers, Core 0 `CTRL_RX`/`STREAM_RX` callbacks, Core 1 `loop()` dispatch, Core messages `0x01..0x34` (`HELLO`/`CAPS`, `HEARTBEAT`, `HEALTH`, `RTC_SET`, `SCREENSHOT_REQ`, `SNAPSHOT`, `CONFIG_UPDATE`, `STATE_EVENT`, `CONTROL_MODE_SET`/`EVENT`, atomic chunked file transfer), and `0x80..0xFF` extension RPC hooks.
+- **Core-Enforced BLE <-> Wi-Fi Portal Mutual Exclusion (`src/net/fic_web_portal.{h,cpp}`):**
+  - Added `fic_web_portal_register_ble_hooks()` so `fic_web_portal_start()` suspends active NimBLE before `WiFi.mode()` (reclaiming internal `DRAM0`) and automatically resumes BLE when the portal stops or cancels, with zero NimBLE linkage overhead for non-BLE sketches.
+- **Verification (`extras/unit_tests/` & `examples/CoreSmoke_35B/`):**
+  - Added FICP CRC-16, CRC-32, codec, UUID LE, and watchdog tests to `test_fic_core.cpp` and `run_tests.py` (`v1.1.0`), plus opt-in BLE smoke wiring in `CoreSmoke_35B.ino`.
+
 ## [v1.1.1] - 2026-11-24
 ### Added
 - `src/boards/fic_board_types.h` & `README.md`: Exported canonical dual-core FreeRTOS task constants (`FIC_CORE_ACQ = 0`, `FIC_CORE_UI = 1`, `FIC_PRIO_AUDIO = 4`, `FIC_PRIO_LVGL = 3`, `FIC_PRIO_UI_FEED = 2`, `FIC_PRIO_BACKGROUND = 1`) and documented the shared memory/RTOS contract across instruments.

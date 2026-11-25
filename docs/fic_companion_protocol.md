@@ -1,7 +1,7 @@
 # Field Instrument Companion Protocol (FICP)
 
 > [!NOTE]
-> **Specification Version:** `1.0.0` (Status: Draft Baseline for `Field_Instrument_Core v1.2.0+`)  
+> **Specification Version:** `1.0.0` (Status: Implemented Baseline in `Field_Instrument_Core v1.2.0+`)  
 > **Last Updated:** November 25, 2026  
 > **Target Hardware:** Waveshare ESP32-S3-Touch-LCD Series (`3.5B`, `3.49 v3`, and future `Field_Instrument_Core` instruments)  
 > **Firmware Runtime Contract:** FreeRTOS Dual-Core + Octal PSRAM Architecture (`fic_board_types.h` / `Field_Instrument_Core`)

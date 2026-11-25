@@ -2,9 +2,9 @@
 #define FIELD_INSTRUMENT_CORE_H
 
 #define FIC_CORE_VERSION_MAJOR 1
-#define FIC_CORE_VERSION_MINOR 1
-#define FIC_CORE_VERSION_PATCH 1
-#define FIC_CORE_VERSION_STR   "1.1.1"
+#define FIC_CORE_VERSION_MINOR 2
+#define FIC_CORE_VERSION_PATCH 0
+#define FIC_CORE_VERSION_STR   "1.2.0"
 
 #include "boards/fic_board_types.h"
 #include "bus/fic_i2c_bsp.h"
@@ -28,6 +28,7 @@
 #include "storage/fic_ring_logger.h"
 #include "storage/fic_core_log.h"
 #include "storage/fic_settings_json.h"
+#include "ble/fic_ble_companion.h"
 #include "net/fic_web_portal.h"
 
 #endif // FIELD_INSTRUMENT_CORE_H
