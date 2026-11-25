@@ -34,6 +34,8 @@ All consumer instruments built on `Field_Instrument_Core` share a single ESP32-S
 
 ## Documentation & Specifications
 - [`docs/fic_companion_protocol.md`](docs/fic_companion_protocol.md): **Field Instrument Companion Protocol (FICP v1.0.0)** -- Generic BLE 5.0 GATT specification (`CTRL` + `STREAM`), `0xAA 0x55` framing, bidirectional settings/state sync, Master-Slave control handoff, chunked file transfer, and Core/Android SDK contracts.
+- [`docs/e220-reference.md`](docs/e220-reference.md): **Ebyte E220-900T30S Practical Engineering Reference (`v3.2`)** -- Empirical register map, Mode 0/3 transitions, `AUX` two-regime pacing, Mode 0 RSSI replies, and `CRC24Q` gatekeeper specifications.
+- **Hardware Datasheets & Technical Articles:** Archived centrally in [`Field_Instrument_Reference`](https://github.com/rguilmet/field-instrument-reference) (`datasheets/` and `articles/` for ESP32-S3, Waveshare boards, E220, UM982, RM3100, SEN0696, MMC5983MA, QMI8658, ES8311, AXP2101, I2C app notes).
 
 ## Verification & Extras
 - `extras/unit_tests/`: Host C++17 unit tests & ESP32-S3 syntax gate (`python extras/unit_tests/run_tests.py`).
