@@ -38,6 +38,7 @@ All consumer instruments built on `Field_Instrument_Core` share a single ESP32-S
 - **Hardware Datasheets & Technical Articles:** Archived centrally in [`Field_Instrument_Reference`](https://github.com/rguilmet/field-instrument-reference) (`datasheets/` and `articles/` for ESP32-S3, Waveshare boards, E220, UM982, RM3100, SEN0696, MMC5983MA, QMI8658, ES8311, AXP2101, I2C app notes).
 
 ## Verification & Extras
+- `extras/tools/`: Reusable hardware bring-up and characterization utilities ([`e220/`](extras/tools/e220) setup, channel scanner, link tester, multi-rate bench suite; [`um98x/`](extras/tools/um98x) Unicore receiver provisioning).
 - `extras/unit_tests/`: Host C++17 unit tests & ESP32-S3 syntax gate (`python extras/unit_tests/run_tests.py`).
 - `extras/ci_compile_all.ps1`: Dual-compile CI script (`-Target All|Core|Rover|Mfs`) enforcing `0` warnings and static `DRAM0 <= 25%`.
 - `scripts/check_secrets.py`: Pre-push secrets & privacy scanner.
