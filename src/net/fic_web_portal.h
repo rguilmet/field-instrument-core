@@ -12,6 +12,8 @@
 #include "../boards/fic_board_types.h"
 
 typedef bool (*fic_web_wifi_creds_cb_t)(char *ssid_out, size_t ssid_sz, char *pass_out, size_t pass_sz);
+typedef bool (*fic_web_ap_creds_cb_t)(char *ssid_out, size_t ssid_sz, char *pass_out, size_t pass_sz);
+typedef bool (*fic_web_write_lock_cb_t)(char *reason_out, size_t reason_sz);
 typedef void (*fic_web_status_cb_t)(const char *status_text);
 typedef void (*fic_web_set_time_cb_t)(uint16_t year, uint8_t month, uint8_t day,
                                       uint8_t hour, uint8_t minute, uint8_t second);
@@ -37,6 +39,8 @@ typedef struct {
     fic_web_set_time_cb_t      on_set_time_cb;
     fic_web_file_uploaded_cb_t on_file_uploaded_cb;
     fic_log_cb_t               log_cb;
+    fic_web_ap_creds_cb_t      get_ap_creds_cb;
+    fic_web_write_lock_cb_t    is_write_locked_cb;
 } FicWebPortalCfg_t;
 
 extern "C" {

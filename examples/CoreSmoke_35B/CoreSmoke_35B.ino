@@ -135,7 +135,7 @@ void setup()
     web_cfg.portal_title      = "Core Smoke Portal";
     web_cfg.version_str       = FIC_CORE_VERSION_STR;
     web_cfg.ap_ssid           = "FIC-Smoke";
-    web_cfg.ap_password       = "12345678";
+    web_cfg.ap_password       = "";
     web_cfg.fallback_fs       = &FFat;
     web_cfg.fallback_label    = "Internal Flash (FFat)";
     web_cfg.fallback_vfs_path = "/ffat";

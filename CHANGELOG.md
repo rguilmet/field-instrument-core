@@ -1,5 +1,12 @@
 # Changelog
 
+## [v1.2.1] - 2026-11-25
+### Changed & Hardened
+- **`F-11` Web Portal Credential & Write-Lock Hardening (`src/net/fic_web_portal.{h,cpp}`):**
+  - Added `get_ap_creds_cb` and `is_write_locked_cb` callbacks to `FicWebPortalCfg_t`.
+  - Removed the hardcoded `"12345678"` SoftAP fallback password cleanly; enforces WPA2 `>= 8` char minimum when an AP password is set (or open/null when explicitly empty) and aborts SoftAP cleanly if invalid.
+  - Added path-traversal checks (`..`, `\`) across download/upload/delete handlers and returns HTTP `423` when `is_write_locked_cb()` rejects destructive uploads or deletes during active instrument field operations.
+
 ## [v1.2.0] - 2026-11-25
 ### Added
 - **Generic FICP (`v1.0.0`) BLE 5.0 Companion Engine (`src/ble/`):**

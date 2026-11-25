@@ -90,6 +90,14 @@ static void handleSetTime(void)
     s_server->send(200, "text/plain", "OK");
 }
 
+static bool is_path_safe(const String &p)
+{
+    if (p.length() == 0U) return false;
+    if (p.indexOf("..") >= 0) return false;
+    if (p.indexOf('\\') >= 0) return false;
+    return true;
+}
+
 static void handleDownload(void)
 {
     if (!s_server) return;
@@ -98,6 +106,10 @@ static void handleDownload(void)
         return;
     }
     String path    = s_server->arg("file");
+    if (!is_path_safe(path)) {
+        s_server->send(400, "text/plain", "Invalid file path");
+        return;
+    }
     String fs_type = s_server->hasArg("fs") ? s_server->arg("fs") : "ffat";
     fs::FS *target_fs = get_target_fs(fs_type);
     if (!target_fs) {
@@ -158,6 +170,17 @@ static void handleDelete(void)
         return;
     }
     String path    = s_server->arg("file");
+    if (!is_path_safe(path)) {
+        s_server->send(400, "text/plain", "Invalid file path");
+        return;
+    }
+    char lock_reason[96] = {0};
+    if (s_cfg.is_write_locked_cb != nullptr && s_cfg.is_write_locked_cb(lock_reason, sizeof(lock_reason))) {
+        web_log("[WIFI] Blocked delete of '%s' (%s)\n", path.c_str(), lock_reason);
+        String msg = String("Storage locked: ") + (lock_reason[0] ? lock_reason : "active field operation");
+        s_server->send(423, "text/plain", msg);
+        return;
+    }
     String fs_type = s_server->hasArg("fs") ? s_server->arg("fs") : "ffat";
     fs::FS *target_fs = get_target_fs(fs_type);
     if (target_fs) {
@@ -174,6 +197,8 @@ static void handleDelete(void)
 
 static File s_uploadFile;
 static File s_uploadMirrorFile;
+static bool s_upload_rejected = false;
+static char s_upload_reject_reason[96] = {0};
 
 static void handleUpload(void)
 {
@@ -186,6 +211,22 @@ static void handleUpload(void)
     }
 
     if (upload.status == UPLOAD_FILE_START) {
+        s_upload_rejected = false;
+        s_upload_reject_reason[0] = '\0';
+        if (!is_path_safe(upload.filename)) {
+            s_upload_rejected = true;
+            snprintf(s_upload_reject_reason, sizeof(s_upload_reject_reason), "invalid filename");
+            web_log("[WIFI] Blocked upload with invalid filename '%s'\n", upload.filename.c_str());
+            return;
+        }
+        if (s_cfg.is_write_locked_cb != nullptr &&
+            s_cfg.is_write_locked_cb(s_upload_reject_reason, sizeof(s_upload_reject_reason))) {
+            s_upload_rejected = true;
+            web_log("[WIFI] Blocked upload of '%s' (%s)\n",
+                    upload.filename.c_str(),
+                    s_upload_reject_reason[0] ? s_upload_reject_reason : "storage locked");
+            return;
+        }
         String filename = upload.filename;
         if (!filename.startsWith("/")) filename = "/" + filename;
         s_uploadFile = target_fs->open(filename, "w");
@@ -198,11 +239,13 @@ static void handleUpload(void)
             }
         }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
+        if (s_upload_rejected) return;
         if (s_uploadFile)       s_uploadFile.write(upload.buf, upload.currentSize);
         if (s_uploadMirrorFile) s_uploadMirrorFile.write(upload.buf, upload.currentSize);
     } else if (upload.status == UPLOAD_FILE_END) {
         if (s_uploadFile)       s_uploadFile.close();
         if (s_uploadMirrorFile) s_uploadMirrorFile.close();
+        if (s_upload_rejected) return;
         if (s_cfg.on_file_uploaded_cb != nullptr) {
             s_cfg.on_file_uploaded_cb(upload.filename.c_str(), fs_type.c_str());
         }
@@ -222,6 +265,13 @@ static void setup_web_routes(void)
     s_server->on("/delete", handleDelete);
     s_server->on("/upload", HTTP_POST, []() {
         if (s_server) {
+            if (s_upload_rejected) {
+                String msg = String("Upload blocked -- storage locked: ") +
+                             (s_upload_reject_reason[0] ? s_upload_reject_reason : "active field operation");
+                s_upload_rejected = false;
+                s_server->send(423, "text/plain", msg);
+                return;
+            }
             s_server->sendHeader("Location", "/");
             s_server->send(303);
         }
@@ -456,8 +506,35 @@ extern "C" void fic_web_portal_start(void)
                 }
             }
         } else {
-            const char *ap_ssid = (s_cfg.ap_ssid && s_cfg.ap_ssid[0] != '\0') ? s_cfg.ap_ssid : "Field-Instrument";
-            const char *ap_pass = s_cfg.ap_password ? s_cfg.ap_password : "12345678";
+            char ap_ssid_buf[33] = {0};
+            char ap_pass_buf[65] = {0};
+            bool got_ap = (s_cfg.get_ap_creds_cb != nullptr) &&
+                          s_cfg.get_ap_creds_cb(ap_ssid_buf, sizeof(ap_ssid_buf), ap_pass_buf, sizeof(ap_pass_buf));
+            if (!got_ap) {
+                if (s_cfg.ap_ssid && s_cfg.ap_ssid[0] != '\0') {
+                    snprintf(ap_ssid_buf, sizeof(ap_ssid_buf), "%s", s_cfg.ap_ssid);
+                }
+                if (s_cfg.ap_password && s_cfg.ap_password[0] != '\0') {
+                    snprintf(ap_pass_buf, sizeof(ap_pass_buf), "%s", s_cfg.ap_password);
+                }
+            }
+            const char *ap_ssid = (ap_ssid_buf[0] != '\0') ? ap_ssid_buf : "Field-Instrument";
+            const size_t pass_len = strlen(ap_pass_buf);
+            if (pass_len > 0U && pass_len < 8U) {
+                web_log("[WIFI ERROR] SoftAP password must be >= 8 chars (WPA2); aborting SoftAP.\n");
+                WiFi.mode(WIFI_OFF);
+                s_wifi_active   = false;
+                s_wifi_starting = false;
+                s_wifi_ip[0]    = '\0';
+                if (s_ble_resume_after_wifi) {
+                    s_ble_resume_after_wifi = false;
+                    s_ble_resume_pending    = true;
+                }
+                notify_status("AP Pass < 8");
+                vTaskDelete(NULL);
+                return;
+            }
+            const char *ap_pass = (pass_len >= 8U) ? ap_pass_buf : nullptr;
             if (has_valid_ssid) {
                 web_log("[WIFI] STA connection to '%s' failed (Status: %d). Starting SoftAP '%s'...\n",
                         ssid, (int)WiFi.status(), ap_ssid);
@@ -469,7 +546,10 @@ extern "C" void fic_web_portal_start(void)
             }
             bool ap_mode_ok = WiFi.mode(WIFI_AP);
             bool ap_ok      = WiFi.softAP(ap_ssid, ap_pass);
-            web_log("[WIFI] SoftAP init -> mode:%s softAP:%s\n", ap_mode_ok ? "OK" : "FAIL", ap_ok ? "OK" : "FAIL");
+            web_log("[WIFI] SoftAP init -> mode:%s softAP:%s (%s)\n",
+                    ap_mode_ok ? "OK" : "FAIL",
+                    ap_ok ? "OK" : "FAIL",
+                    ap_pass ? "WPA2" : "OPEN");
 
             int ap_wait = 0;
             while (!s_wifi_abort_requested && WiFi.softAPIP() == IPAddress(0, 0, 0, 0) && ap_wait < 10) {
