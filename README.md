@@ -32,6 +32,9 @@ All consumer instruments built on `Field_Instrument_Core` share a single ESP32-S
 - **Core `1` (`FIC_CORE_UI`):** Real-time I2S audio synthesis (`FIC_PRIO_AUDIO = 4`) above `LVGL` rendering (`FIC_PRIO_LVGL = 3`), UI state/power tasks (`FIC_PRIO_UI_FEED = 2`), and background `loop()` Flash/SD writes, debounced settings saves, and HTTP polling (`FIC_PRIO_BACKGROUND = 1`).
 - **Heap & Flash Discipline:** Bulk LVGL UI trees route allocations `>= 64 B` to Octal PSRAM (`heap_caps_malloc_extmem_enable`), keeping `>= 150 KB` internal `DRAM0` free for Wi-Fi/BLE/DMA (`<= 25%` static `.bss`); Flash/SD settings writes must never run inside LVGL or UI tasks.
 
+## Documentation & Specifications
+- [`docs/fic_companion_protocol.md`](docs/fic_companion_protocol.md): **Field Instrument Companion Protocol (FICP v1.0.0)** -- Generic BLE 5.0 GATT specification (`CTRL` + `STREAM`), `0xAA 0x55` framing, bidirectional settings/state sync, Master-Slave control handoff, chunked file transfer, and Core/Android SDK contracts.
+
 ## Verification & Extras
 - `extras/unit_tests/`: Host C++17 unit tests & ESP32-S3 syntax gate (`python extras/unit_tests/run_tests.py`).
 - `extras/ci_compile_all.ps1`: Dual-compile CI script (`-Target All|Core|Rover|Mfs`) enforcing `0` warnings and static `DRAM0 <= 25%`.
