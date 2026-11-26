@@ -60,12 +60,14 @@ void fic_web_portal_register_ble_hooks(fic_web_ble_is_active_cb_t is_active_cb,
                                        fic_web_ble_suspend_cb_t suspend_cb,
                                        fic_web_ble_resume_cb_t resume_cb);
 
+void fic_web_portal_set_ble_auto_resume(bool enabled);
 void fic_web_portal_start(void);
 void fic_web_portal_stop(void);
 void fic_web_portal_handle(void);
 bool fic_web_portal_is_active(void);
 bool fic_web_portal_is_softap(void);
 bool fic_web_portal_is_starting(void);
+bool fic_web_portal_is_busy(void);
 const char *fic_web_portal_get_ip(void);
 
 #ifdef __cplusplus

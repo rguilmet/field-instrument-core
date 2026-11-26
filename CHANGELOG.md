@@ -1,5 +1,11 @@
 # Changelog
 
+## [v1.2.2] - 2026-11-25
+### Added & Hardened
+- **BLE Auto-Resume Policy Control & Portal Busy State (`src/net/fic_web_portal.{h,cpp}`):**
+  - Added `fic_web_portal_set_ble_auto_resume(bool enabled)` so consolidated instrument radio state machines (e.g., `BLE -> WIFI -> OFF -> BLE`) can suppress automatic BLE restart when stopping Wi-Fi directly into `COMMS: OFF`.
+  - Refactored `wifi_connect` task lifecycle into `wifi_connect_worker()` / `wifi_connect_task_entry()` with explicit `s_wifi_task_running` tracking and added `fic_web_portal_is_busy()` so callers never race concurrent `wifi_connect` task teardown when restarting BLE after `WIFI -> OFF`.
+
 ## [v1.2.1] - 2026-11-25
 ### Changed & Hardened
 - **`F-11` Web Portal Credential & Write-Lock Hardening (`src/net/fic_web_portal.{h,cpp}`):**

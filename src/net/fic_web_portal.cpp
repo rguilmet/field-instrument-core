@@ -12,15 +12,17 @@
 #include <string.h>
 #include <time.h>
 
-static FicWebPortalCfg_t s_cfg                   = {0};
-static volatile bool     s_wifi_active           = false;
-static volatile bool     s_wifi_starting         = false;
-static volatile bool     s_wifi_abort_requested  = false;
-static volatile bool     s_wifi_stop_pending     = false;
-static volatile bool     s_ble_resume_after_wifi = false;
-static volatile bool     s_ble_resume_pending    = false;
-static char              s_wifi_ip[32]           = {0};
-static WebServer        *s_server                = nullptr;
+static FicWebPortalCfg_t s_cfg                      = {0};
+static volatile bool     s_wifi_active              = false;
+static volatile bool     s_wifi_starting            = false;
+static volatile bool     s_wifi_abort_requested     = false;
+static volatile bool     s_wifi_stop_pending        = false;
+static volatile bool     s_wifi_task_running        = false;
+static volatile bool     s_ble_auto_resume_enabled  = true;
+static volatile bool     s_ble_resume_after_wifi    = false;
+static volatile bool     s_ble_resume_pending       = false;
+static char              s_wifi_ip[32]              = {0};
+static WebServer        *s_server                   = nullptr;
 
 static fic_web_ble_is_active_cb_t s_ble_is_active_cb = nullptr;
 static fic_web_ble_suspend_cb_t   s_ble_suspend_cb   = nullptr;
@@ -296,6 +298,15 @@ extern "C" void fic_web_portal_configure(const FicWebPortalCfg_t *cfg)
     }
 }
 
+extern "C" void fic_web_portal_set_ble_auto_resume(bool enabled)
+{
+    s_ble_auto_resume_enabled = enabled;
+    if (!enabled) {
+        s_ble_resume_after_wifi = false;
+        s_ble_resume_pending    = false;
+    }
+}
+
 extern "C" bool fic_web_portal_is_active(void)
 {
     return s_wifi_active;
@@ -311,155 +322,245 @@ extern "C" bool fic_web_portal_is_starting(void)
     return s_wifi_starting;
 }
 
+extern "C" bool fic_web_portal_is_busy(void)
+{
+    return (s_wifi_active || s_wifi_starting || s_wifi_stop_pending || s_wifi_task_running);
+}
+
 extern "C" const char *fic_web_portal_get_ip(void)
 {
     return s_wifi_ip;
 }
 
-extern "C" void fic_web_portal_start(void)
+static void wifi_connect_worker(void)
 {
-    if (s_wifi_active || s_wifi_starting) {
+    int stop_wait = 0;
+    while (s_wifi_stop_pending && stop_wait < 30) {
+        vTaskDelay(pdMS_TO_TICKS(15));
+        stop_wait++;
+    }
+    if (s_wifi_abort_requested) {
+        s_wifi_starting = false;
+        notify_status("Wi-Fi Off");
+        web_log("[WIFI] Connection cancelled before init.\n");
         return;
     }
-    s_wifi_abort_requested = false;
-    s_wifi_starting        = true;
-    notify_status("Connecting...");
 
-    // Non-blocking connection task pinned to Core 1 (UI & Event Core) at Priority 3
-    xTaskCreatePinnedToCore([](void *arg) {
-        (void)arg;
-        int stop_wait = 0;
-        while (s_wifi_stop_pending && stop_wait < 30) {
-            vTaskDelay(pdMS_TO_TICKS(15));
-            stop_wait++;
-        }
-        if (s_wifi_abort_requested) {
-            s_wifi_starting = false;
-            notify_status("Wi-Fi Off");
-            web_log("[WIFI] Connection cancelled before init.\n");
-            vTaskDelete(NULL);
-            return;
-        }
+    // Core-enforced BLE <-> Wi-Fi mutual exclusion: tear down NimBLE cleanly to reclaim DRAM0.
+    if (s_ble_is_active_cb != nullptr && s_ble_is_active_cb() && s_ble_suspend_cb != nullptr) {
+        s_ble_resume_after_wifi = s_ble_auto_resume_enabled;
+        notify_status("Stopping BLE...");
+        web_log("[WIFI] Suspending active BLE companion before Wi-Fi init...\n");
+        s_ble_suspend_cb();
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
 
-        // Core-enforced BLE <-> Wi-Fi mutual exclusion: tear down NimBLE cleanly to reclaim DRAM0.
-        if (s_ble_is_active_cb != nullptr && s_ble_is_active_cb() && s_ble_suspend_cb != nullptr) {
-            s_ble_resume_after_wifi = true;
-            notify_status("Stopping BLE...");
-            web_log("[WIFI] Suspending active BLE companion before Wi-Fi init...\n");
-            s_ble_suspend_cb();
+    if (s_wifi_abort_requested) {
+        s_wifi_starting = false;
+        if (s_ble_resume_after_wifi) {
+            s_ble_resume_after_wifi = false;
+            s_ble_resume_pending    = true;
+        }
+        notify_status("Wi-Fi Off");
+        web_log("[WIFI] Connection cancelled after BLE suspend.\n");
+        return;
+    }
+
+    web_log("[WIFI] Pre-Init Heap -> Internal Free: %u B (Largest: %u B, DMA: %u B) | PSRAM Free: %u KB\n",
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+            (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024U));
+
+    WiFi.persistent(false);
+
+    static wifi_event_id_t s_wifi_event_id = 0;
+    if (s_wifi_event_id == 0) {
+        s_wifi_event_id = WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+            if (event == ARDUINO_EVENT_WIFI_STA_START) {
+                web_log("[WIFI EVENT] STA Interface Started\n");
+            } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
+                web_log("[WIFI EVENT] STA Associated with AP\n");
+            } else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+                uint8_t reason = info.wifi_sta_disconnected.reason;
+                web_log("[WIFI EVENT] STA Disconnected (Reason: %u - %s)\n",
+                        reason, WiFi.disconnectReasonName((wifi_err_reason_t)reason));
+            } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+                web_log("[WIFI EVENT] STA Got IP: %s\n",
+                        IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
+            } else if (event == ARDUINO_EVENT_WIFI_AP_START) {
+                web_log("[WIFI EVENT] SoftAP Started\n");
+            }
+        });
+    }
+
+    char ssid[64] = {0};
+    char pass[64] = {0};
+    bool has_creds = (s_cfg.get_wifi_creds_cb != nullptr) &&
+                     s_cfg.get_wifi_creds_cb(ssid, sizeof(ssid), pass, sizeof(pass));
+    bool has_valid_ssid = has_creds && !fic_json_is_placeholder_ssid(ssid);
+
+    bool sta_connected = false;
+    if (has_valid_ssid) {
+        web_log("[WIFI] Connecting to '%s' (password len=%d)...\n", ssid, (int)strlen(pass));
+        if ((WiFi.getMode() & WIFI_MODE_AP) != 0) {
+            WiFi.softAPdisconnect(true);
+            vTaskDelay(pdMS_TO_TICKS(100));
+        } else if ((WiFi.getMode() & WIFI_MODE_STA) != 0) {
+            WiFi.disconnect(false, false);
             vTaskDelay(pdMS_TO_TICKS(50));
         }
 
-        if (s_wifi_abort_requested) {
+        bool mode_ok = WiFi.mode(WIFI_STA);
+        web_log("[WIFI] WiFi.mode(WIFI_STA) -> %s | Internal Free: %u B (Largest: %u B)\n",
+                mode_ok ? "OK" : "FAIL",
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+
+        WiFi.setSleep(false);
+        WiFi.setAutoReconnect(true);
+        WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+        WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
+        WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
+
+        notify_status("Connecting...");
+        wl_status_t begin_res = WiFi.begin(ssid, pass);
+        web_log("[WIFI] WiFi.begin('%s') returned status: %d\n", ssid, (int)begin_res);
+
+        int polls = 0;
+        const int max_polls = 200;
+        wl_status_t last_status = (wl_status_t)999;
+
+        while (!s_wifi_abort_requested &&
+               (WiFi.status() != WL_CONNECTED && WiFi.localIP() == IPAddress(0, 0, 0, 0)) &&
+               polls < max_polls) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            polls++;
+            wl_status_t cur_status = WiFi.status();
+            if (cur_status != last_status || (polls % 20 == 0)) {
+                last_status = cur_status;
+                const char *st_name = (cur_status == WL_IDLE_STATUS)     ? "IDLE" :
+                                      (cur_status == WL_NO_SSID_AVAIL)   ? "NO_SSID_AVAIL" :
+                                      (cur_status == WL_SCAN_COMPLETED)  ? "SCAN_COMPLETED" :
+                                      (cur_status == WL_CONNECTED)       ? "CONNECTED" :
+                                      (cur_status == WL_CONNECT_FAILED)  ? "CONNECT_FAILED" :
+                                      (cur_status == WL_CONNECTION_LOST) ? "CONNECTION_LOST" :
+                                      (cur_status == WL_DISCONNECTED)    ? "DISCONNECTED" :
+                                      ((int)cur_status == 254)           ? "INITIALIZING" : "UNKNOWN";
+                web_log("[WIFI] Status: %s (%d) | %.1fs / 20.0s\n", st_name, (int)cur_status, polls * 0.1f);
+                char prog[32];
+                snprintf(prog, sizeof(prog), "Connecting (%ds)...", (int)(polls / 10));
+                notify_status(prog);
+            }
+        }
+        sta_connected = (!s_wifi_abort_requested &&
+                         (WiFi.status() == WL_CONNECTED || WiFi.localIP() != IPAddress(0, 0, 0, 0)));
+    } else {
+        web_log("[WIFI] No valid STA credentials configured. Launching SoftAP hotspot...\n");
+    }
+
+    if (s_wifi_abort_requested) {
+        if ((WiFi.getMode() & WIFI_MODE_AP) != 0) {
+            WiFi.softAPdisconnect(true);
+        }
+        WiFi.disconnect(false, false);
+        WiFi.mode(WIFI_OFF);
+        s_wifi_active   = false;
+        s_wifi_starting = false;
+        s_wifi_ip[0]    = '\0';
+        if (s_ble_resume_after_wifi) {
+            s_ble_resume_after_wifi = false;
+            s_ble_resume_pending    = true;
+        }
+        notify_status("Wi-Fi Off");
+        web_log("[WIFI] Connection cancelled by user.\n");
+        return;
+    }
+
+    if (sta_connected) {
+        String ip = WiFi.localIP().toString();
+        strncpy(s_wifi_ip, ip.c_str(), sizeof(s_wifi_ip) - 1);
+        s_wifi_ip[sizeof(s_wifi_ip) - 1] = '\0';
+
+        setup_web_routes();
+        s_server->begin();
+        s_wifi_active   = true;
+        s_wifi_starting = false;
+        notify_status(s_wifi_ip);
+        web_log("[WIFI] Connected to '%s'! Web Portal: http://%s/\n", ssid, s_wifi_ip);
+
+        if (!s_wifi_abort_requested && !s_wifi_stop_pending) {
+            const char *ntp = (s_cfg.ntp_server && s_cfg.ntp_server[0] != '\0') ? s_cfg.ntp_server : "pool.ntp.org";
+            configTime(0, 0, ntp);
+            struct tm timeinfo;
+            if (getLocalTime(&timeinfo, 2500)) {
+                uint16_t yr = (uint16_t)(timeinfo.tm_year + 1900);
+                uint8_t  mo = (uint8_t)(timeinfo.tm_mon + 1);
+                uint8_t  dy = (uint8_t)timeinfo.tm_mday;
+                uint8_t  hr = (uint8_t)timeinfo.tm_hour;
+                uint8_t  mn = (uint8_t)timeinfo.tm_min;
+                uint8_t  sc = (uint8_t)timeinfo.tm_sec;
+                if (s_cfg.on_set_time_cb != nullptr) {
+                    s_cfg.on_set_time_cb(yr, mo, dy, hr, mn, sc);
+                } else {
+                    fic_rtc_set_time(yr, mo, dy, hr, mn, sc);
+                }
+                web_log("[WIFI] RTC synced via NTP!\n");
+            }
+        }
+    } else {
+        char ap_ssid_buf[33] = {0};
+        char ap_pass_buf[65] = {0};
+        bool got_ap = (s_cfg.get_ap_creds_cb != nullptr) &&
+                      s_cfg.get_ap_creds_cb(ap_ssid_buf, sizeof(ap_ssid_buf), ap_pass_buf, sizeof(ap_pass_buf));
+        if (!got_ap) {
+            if (s_cfg.ap_ssid && s_cfg.ap_ssid[0] != '\0') {
+                snprintf(ap_ssid_buf, sizeof(ap_ssid_buf), "%s", s_cfg.ap_ssid);
+            }
+            if (s_cfg.ap_password && s_cfg.ap_password[0] != '\0') {
+                snprintf(ap_pass_buf, sizeof(ap_pass_buf), "%s", s_cfg.ap_password);
+            }
+        }
+        const char *ap_ssid = (ap_ssid_buf[0] != '\0') ? ap_ssid_buf : "Field-Instrument";
+        const size_t pass_len = strlen(ap_pass_buf);
+        if (pass_len > 0U && pass_len < 8U) {
+            web_log("[WIFI ERROR] SoftAP password must be >= 8 chars (WPA2); aborting SoftAP.\n");
+            WiFi.mode(WIFI_OFF);
+            s_wifi_active   = false;
             s_wifi_starting = false;
+            s_wifi_ip[0]    = '\0';
             if (s_ble_resume_after_wifi) {
                 s_ble_resume_after_wifi = false;
                 s_ble_resume_pending    = true;
             }
-            notify_status("Wi-Fi Off");
-            web_log("[WIFI] Connection cancelled after BLE suspend.\n");
-            vTaskDelete(NULL);
+            notify_status("AP Pass < 8");
             return;
         }
-
-        web_log("[WIFI] Pre-Init Heap -> Internal Free: %u B (Largest: %u B, DMA: %u B) | PSRAM Free: %u KB\n",
-                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-                (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
-                (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024U));
-
-        WiFi.persistent(false);
-
-        static wifi_event_id_t s_wifi_event_id = 0;
-        if (s_wifi_event_id == 0) {
-            s_wifi_event_id = WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
-                if (event == ARDUINO_EVENT_WIFI_STA_START) {
-                    web_log("[WIFI EVENT] STA Interface Started\n");
-                } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
-                    web_log("[WIFI EVENT] STA Associated with AP\n");
-                } else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
-                    uint8_t reason = info.wifi_sta_disconnected.reason;
-                    web_log("[WIFI EVENT] STA Disconnected (Reason: %u - %s)\n",
-                            reason, WiFi.disconnectReasonName((wifi_err_reason_t)reason));
-                } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
-                    web_log("[WIFI EVENT] STA Got IP: %s\n",
-                            IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
-                } else if (event == ARDUINO_EVENT_WIFI_AP_START) {
-                    web_log("[WIFI EVENT] SoftAP Started\n");
-                }
-            });
-        }
-
-        char ssid[64] = {0};
-        char pass[64] = {0};
-        bool has_creds = (s_cfg.get_wifi_creds_cb != nullptr) &&
-                         s_cfg.get_wifi_creds_cb(ssid, sizeof(ssid), pass, sizeof(pass));
-        bool has_valid_ssid = has_creds && !fic_json_is_placeholder_ssid(ssid);
-
-        bool sta_connected = false;
+        const char *ap_pass = (pass_len >= 8U) ? ap_pass_buf : nullptr;
         if (has_valid_ssid) {
-            web_log("[WIFI] Connecting to '%s' (password len=%d)...\n", ssid, (int)strlen(pass));
-            if ((WiFi.getMode() & WIFI_MODE_AP) != 0) {
-                WiFi.softAPdisconnect(true);
-                vTaskDelay(pdMS_TO_TICKS(100));
-            } else if ((WiFi.getMode() & WIFI_MODE_STA) != 0) {
-                WiFi.disconnect(false, false);
-                vTaskDelay(pdMS_TO_TICKS(50));
-            }
+            web_log("[WIFI] STA connection to '%s' failed (Status: %d). Starting SoftAP '%s'...\n",
+                    ssid, (int)WiFi.status(), ap_ssid);
+        }
+        notify_status("Starting AP...");
+        if ((WiFi.getMode() & WIFI_MODE_STA) != 0) {
+            WiFi.disconnect(false, false);
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        bool ap_mode_ok = WiFi.mode(WIFI_AP);
+        bool ap_ok      = WiFi.softAP(ap_ssid, ap_pass);
+        web_log("[WIFI] SoftAP init -> mode:%s softAP:%s (%s)\n",
+                ap_mode_ok ? "OK" : "FAIL",
+                ap_ok ? "OK" : "FAIL",
+                ap_pass ? "WPA2" : "OPEN");
 
-            bool mode_ok = WiFi.mode(WIFI_STA);
-            web_log("[WIFI] WiFi.mode(WIFI_STA) -> %s | Internal Free: %u B (Largest: %u B)\n",
-                    mode_ok ? "OK" : "FAIL",
-                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-                    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-
-            WiFi.setSleep(false);
-            WiFi.setAutoReconnect(true);
-            WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
-            WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
-            WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
-
-            notify_status("Connecting...");
-            wl_status_t begin_res = WiFi.begin(ssid, pass);
-            web_log("[WIFI] WiFi.begin('%s') returned status: %d\n", ssid, (int)begin_res);
-
-            int polls = 0;
-            const int max_polls = 200;
-            wl_status_t last_status = (wl_status_t)999;
-
-            while (!s_wifi_abort_requested &&
-                   (WiFi.status() != WL_CONNECTED && WiFi.localIP() == IPAddress(0, 0, 0, 0)) &&
-                   polls < max_polls) {
-                vTaskDelay(pdMS_TO_TICKS(100));
-                polls++;
-                wl_status_t cur_status = WiFi.status();
-                if (cur_status != last_status || (polls % 20 == 0)) {
-                    last_status = cur_status;
-                    const char *st_name = (cur_status == WL_IDLE_STATUS)     ? "IDLE" :
-                                          (cur_status == WL_NO_SSID_AVAIL)   ? "NO_SSID_AVAIL" :
-                                          (cur_status == WL_SCAN_COMPLETED)  ? "SCAN_COMPLETED" :
-                                          (cur_status == WL_CONNECTED)       ? "CONNECTED" :
-                                          (cur_status == WL_CONNECT_FAILED)  ? "CONNECT_FAILED" :
-                                          (cur_status == WL_CONNECTION_LOST) ? "CONNECTION_LOST" :
-                                          (cur_status == WL_DISCONNECTED)    ? "DISCONNECTED" :
-                                          ((int)cur_status == 254)           ? "INITIALIZING" : "UNKNOWN";
-                    web_log("[WIFI] Status: %s (%d) | %.1fs / 20.0s\n", st_name, (int)cur_status, polls * 0.1f);
-                    char prog[32];
-                    snprintf(prog, sizeof(prog), "Connecting (%ds)...", (int)(polls / 10));
-                    notify_status(prog);
-                }
-            }
-            sta_connected = (!s_wifi_abort_requested &&
-                             (WiFi.status() == WL_CONNECTED || WiFi.localIP() != IPAddress(0, 0, 0, 0)));
-        } else {
-            web_log("[WIFI] No valid STA credentials configured. Launching SoftAP hotspot...\n");
+        int ap_wait = 0;
+        while (!s_wifi_abort_requested && WiFi.softAPIP() == IPAddress(0, 0, 0, 0) && ap_wait < 10) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            ap_wait++;
         }
 
         if (s_wifi_abort_requested) {
-            if ((WiFi.getMode() & WIFI_MODE_AP) != 0) {
-                WiFi.softAPdisconnect(true);
-            }
-            WiFi.disconnect(false, false);
+            WiFi.softAPdisconnect(true);
             WiFi.mode(WIFI_OFF);
             s_wifi_active   = false;
             s_wifi_starting = false;
@@ -469,127 +570,53 @@ extern "C" void fic_web_portal_start(void)
                 s_ble_resume_pending    = true;
             }
             notify_status("Wi-Fi Off");
-            web_log("[WIFI] Connection cancelled by user.\n");
-            vTaskDelete(NULL);
+            web_log("[WIFI] SoftAP startup cancelled by user.\n");
             return;
         }
 
-        if (sta_connected) {
-            String ip = WiFi.localIP().toString();
-            strncpy(s_wifi_ip, ip.c_str(), sizeof(s_wifi_ip) - 1);
-            s_wifi_ip[sizeof(s_wifi_ip) - 1] = '\0';
-
-            setup_web_routes();
-            s_server->begin();
-            s_wifi_active   = true;
-            s_wifi_starting = false;
-            notify_status(s_wifi_ip);
-            web_log("[WIFI] Connected to '%s'! Web Portal: http://%s/\n", ssid, s_wifi_ip);
-
-            if (!s_wifi_abort_requested && !s_wifi_stop_pending) {
-                const char *ntp = (s_cfg.ntp_server && s_cfg.ntp_server[0] != '\0') ? s_cfg.ntp_server : "pool.ntp.org";
-                configTime(0, 0, ntp);
-                struct tm timeinfo;
-                if (getLocalTime(&timeinfo, 2500)) {
-                    uint16_t yr = (uint16_t)(timeinfo.tm_year + 1900);
-                    uint8_t  mo = (uint8_t)(timeinfo.tm_mon + 1);
-                    uint8_t  dy = (uint8_t)timeinfo.tm_mday;
-                    uint8_t  hr = (uint8_t)timeinfo.tm_hour;
-                    uint8_t  mn = (uint8_t)timeinfo.tm_min;
-                    uint8_t  sc = (uint8_t)timeinfo.tm_sec;
-                    if (s_cfg.on_set_time_cb != nullptr) {
-                        s_cfg.on_set_time_cb(yr, mo, dy, hr, mn, sc);
-                    } else {
-                        fic_rtc_set_time(yr, mo, dy, hr, mn, sc);
-                    }
-                    web_log("[WIFI] RTC synced via NTP!\n");
-                }
-            }
-        } else {
-            char ap_ssid_buf[33] = {0};
-            char ap_pass_buf[65] = {0};
-            bool got_ap = (s_cfg.get_ap_creds_cb != nullptr) &&
-                          s_cfg.get_ap_creds_cb(ap_ssid_buf, sizeof(ap_ssid_buf), ap_pass_buf, sizeof(ap_pass_buf));
-            if (!got_ap) {
-                if (s_cfg.ap_ssid && s_cfg.ap_ssid[0] != '\0') {
-                    snprintf(ap_ssid_buf, sizeof(ap_ssid_buf), "%s", s_cfg.ap_ssid);
-                }
-                if (s_cfg.ap_password && s_cfg.ap_password[0] != '\0') {
-                    snprintf(ap_pass_buf, sizeof(ap_pass_buf), "%s", s_cfg.ap_password);
-                }
-            }
-            const char *ap_ssid = (ap_ssid_buf[0] != '\0') ? ap_ssid_buf : "Field-Instrument";
-            const size_t pass_len = strlen(ap_pass_buf);
-            if (pass_len > 0U && pass_len < 8U) {
-                web_log("[WIFI ERROR] SoftAP password must be >= 8 chars (WPA2); aborting SoftAP.\n");
-                WiFi.mode(WIFI_OFF);
-                s_wifi_active   = false;
-                s_wifi_starting = false;
-                s_wifi_ip[0]    = '\0';
-                if (s_ble_resume_after_wifi) {
-                    s_ble_resume_after_wifi = false;
-                    s_ble_resume_pending    = true;
-                }
-                notify_status("AP Pass < 8");
-                vTaskDelete(NULL);
-                return;
-            }
-            const char *ap_pass = (pass_len >= 8U) ? ap_pass_buf : nullptr;
-            if (has_valid_ssid) {
-                web_log("[WIFI] STA connection to '%s' failed (Status: %d). Starting SoftAP '%s'...\n",
-                        ssid, (int)WiFi.status(), ap_ssid);
-            }
-            notify_status("Starting AP...");
-            if ((WiFi.getMode() & WIFI_MODE_STA) != 0) {
-                WiFi.disconnect(false, false);
-                vTaskDelay(pdMS_TO_TICKS(100));
-            }
-            bool ap_mode_ok = WiFi.mode(WIFI_AP);
-            bool ap_ok      = WiFi.softAP(ap_ssid, ap_pass);
-            web_log("[WIFI] SoftAP init -> mode:%s softAP:%s (%s)\n",
-                    ap_mode_ok ? "OK" : "FAIL",
-                    ap_ok ? "OK" : "FAIL",
-                    ap_pass ? "WPA2" : "OPEN");
-
-            int ap_wait = 0;
-            while (!s_wifi_abort_requested && WiFi.softAPIP() == IPAddress(0, 0, 0, 0) && ap_wait < 10) {
-                vTaskDelay(pdMS_TO_TICKS(100));
-                ap_wait++;
-            }
-
-            if (s_wifi_abort_requested) {
-                WiFi.softAPdisconnect(true);
-                WiFi.mode(WIFI_OFF);
-                s_wifi_active   = false;
-                s_wifi_starting = false;
-                s_wifi_ip[0]    = '\0';
-                if (s_ble_resume_after_wifi) {
-                    s_ble_resume_after_wifi = false;
-                    s_ble_resume_pending    = true;
-                }
-                notify_status("Wi-Fi Off");
-                web_log("[WIFI] SoftAP startup cancelled by user.\n");
-                vTaskDelete(NULL);
-                return;
-            }
-
-            IPAddress apIP = WiFi.softAPIP();
-            if (apIP == IPAddress(0, 0, 0, 0)) {
-                apIP = IPAddress(192, 168, 4, 1);
-            }
-            String ip = apIP.toString();
-            strncpy(s_wifi_ip, ip.c_str(), sizeof(s_wifi_ip) - 1);
-            s_wifi_ip[sizeof(s_wifi_ip) - 1] = '\0';
-            setup_web_routes();
-            s_server->begin();
-            s_wifi_active   = true;
-            s_wifi_starting = false;
-            notify_status(s_wifi_ip);
-            web_log("[WIFI] SoftAP Active! Connect to SSID '%s' -> http://%s/\n", ap_ssid, s_wifi_ip);
+        IPAddress apIP = WiFi.softAPIP();
+        if (apIP == IPAddress(0, 0, 0, 0)) {
+            apIP = IPAddress(192, 168, 4, 1);
         }
+        String ip = apIP.toString();
+        strncpy(s_wifi_ip, ip.c_str(), sizeof(s_wifi_ip) - 1);
+        s_wifi_ip[sizeof(s_wifi_ip) - 1] = '\0';
+        setup_web_routes();
+        s_server->begin();
+        s_wifi_active   = true;
         s_wifi_starting = false;
-        vTaskDelete(NULL);
-    }, "wifi_connect", 8192, NULL, 3, NULL, 1);
+        notify_status(s_wifi_ip);
+        web_log("[WIFI] SoftAP Active! Connect to SSID '%s' -> http://%s/\n", ap_ssid, s_wifi_ip);
+    }
+    s_wifi_starting = false;
+}
+
+static void wifi_connect_task_entry(void *arg)
+{
+    (void)arg;
+    wifi_connect_worker();
+    s_wifi_task_running = false;
+    vTaskDelete(NULL);
+}
+
+extern "C" void fic_web_portal_start(void)
+{
+    if (s_wifi_active || s_wifi_starting || s_wifi_task_running) {
+        return;
+    }
+    s_wifi_abort_requested = false;
+    s_wifi_starting        = true;
+    s_wifi_task_running    = true;
+    notify_status("Connecting...");
+
+    // Non-blocking connection task pinned to Core 1 (UI & Event Core) at Priority 3
+    BaseType_t ok = xTaskCreatePinnedToCore(wifi_connect_task_entry, "wifi_connect", 8192, NULL, 3, NULL, 1);
+    if (ok != pdPASS) {
+        s_wifi_task_running = false;
+        s_wifi_starting     = false;
+        notify_status("Wi-Fi Failed");
+        web_log("[WIFI ERROR] Failed to spawn wifi_connect task.\n");
+    }
 }
 
 extern "C" void fic_web_portal_stop(void)
