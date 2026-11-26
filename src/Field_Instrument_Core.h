@@ -3,8 +3,8 @@
 
 #define FIC_CORE_VERSION_MAJOR 1
 #define FIC_CORE_VERSION_MINOR 2
-#define FIC_CORE_VERSION_PATCH 2
-#define FIC_CORE_VERSION_STR   "1.2.2"
+#define FIC_CORE_VERSION_PATCH 3
+#define FIC_CORE_VERSION_STR   "1.2.3"
 
 #include "boards/fic_board_types.h"
 #include "bus/fic_i2c_bsp.h"

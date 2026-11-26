@@ -1,5 +1,11 @@
 # Changelog
 
+## [v1.2.3] - 2026-11-25
+### Changed
+- **BLE Primary Advertisement Name & GAP Appearance (`src/ble/fic_ble_companion.{h,cpp}`):**
+  - Added optional `gap_appearance` (`0x0540` Generic Sensor default) to `FicBleCompanionCfg_t` and set GAP Appearance via `ble_svc_gap_device_appearance_set()` on BLE sync.
+  - Placed Complete Local Name + GAP Appearance + Flags directly in primary `ADV_IND` (`<= 31 B`, clamping name to `22` bytes) and moved the 128-bit FICP service UUID + TX Power into `SCAN_RSP` (`21 B`) so passive BLE scanners see device identity immediately alongside active UUID scanners.
+
 ## [v1.2.2] - 2026-11-25
 ### Added & Hardened
 - **BLE Auto-Resume Policy Control & Portal Busy State (`src/net/fic_web_portal.{h,cpp}`):**

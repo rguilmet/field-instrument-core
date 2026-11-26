@@ -95,6 +95,7 @@ typedef struct {
     uint8_t                       auth_mode;
     uint32_t                      feature_mask;
     uint8_t                       telem_hz_default;
+    uint16_t                      gap_appearance;
     bool                          enable_stream_rx;
     bool                          enable_stream_tx;
     size_t                        ctrl_rx_ring_bytes;

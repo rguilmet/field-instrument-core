@@ -276,12 +276,26 @@ static bool start_advertising(void)
         return false;
     }
 
+    const char *dev_name = (s_state.cfg.device_name && s_state.cfg.device_name[0] != '\0')
+                               ? s_state.cfg.device_name
+                               : "FIC-Instrument";
+    size_t name_len = strlen(dev_name);
+    if (name_len > 22U) {
+        // Clamp so Flags (3B) + Appearance (4B) + Complete Name (2 + len) <= 31B ADV_IND
+        name_len = 22U;
+    }
+    const uint16_t appearance = (s_state.cfg.gap_appearance != 0U)
+                                    ? s_state.cfg.gap_appearance
+                                    : 0x0540U; // Generic Sensor fallback
+
     struct ble_hs_adv_fields adv_fields;
     memset(&adv_fields, 0, sizeof(adv_fields));
-    adv_fields.flags               = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    adv_fields.uuids128            = &kUuidSvc;
-    adv_fields.num_uuids128        = 1U;
-    adv_fields.uuids128_is_complete = 1U;
+    adv_fields.flags                 = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    adv_fields.appearance            = appearance;
+    adv_fields.appearance_is_present = 1U;
+    adv_fields.name                  = reinterpret_cast<const uint8_t *>(dev_name);
+    adv_fields.name_len              = (uint8_t)name_len;
+    adv_fields.name_is_complete      = 1U;
 
     int rc = ble_gap_adv_set_fields(&adv_fields);
     if (rc != 0) {
@@ -289,19 +303,11 @@ static bool start_advertising(void)
         return false;
     }
 
-    const char *dev_name = (s_state.cfg.device_name && s_state.cfg.device_name[0] != '\0')
-                               ? s_state.cfg.device_name
-                               : "FIC-Instrument";
-    size_t name_len = strlen(dev_name);
-    if (name_len > 26U) {
-        name_len = 26U;
-    }
-
     struct ble_hs_adv_fields rsp_fields;
     memset(&rsp_fields, 0, sizeof(rsp_fields));
-    rsp_fields.name                  = reinterpret_cast<const uint8_t *>(dev_name);
-    rsp_fields.name_len              = (uint8_t)name_len;
-    rsp_fields.name_is_complete      = 1U;
+    rsp_fields.uuids128              = &kUuidSvc;
+    rsp_fields.num_uuids128          = 1U;
+    rsp_fields.uuids128_is_complete  = 1U;
     rsp_fields.tx_pwr_lvl            = BLE_HS_ADV_TX_PWR_LVL_AUTO;
     rsp_fields.tx_pwr_lvl_is_present = 1U;
 
@@ -407,6 +413,9 @@ static void on_ble_sync(void)
                                ? s_state.cfg.device_name
                                : "FIC-Instrument";
     (void)ble_svc_gap_device_name_set(dev_name);
+    (void)ble_svc_gap_device_appearance_set((s_state.cfg.gap_appearance != 0U)
+                                                ? s_state.cfg.gap_appearance
+                                                : 0x0540U);
 
     s_nimble_synced = true;
     (void)start_advertising();
